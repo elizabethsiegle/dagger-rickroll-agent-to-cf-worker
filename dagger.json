@@ -1,0 +1,7 @@
+{
+  "name": "url-slug-agent",
+  "engineVersion": "v0.18.9",
+  "sdk": {
+    "source": "typescript"
+  }
+}
