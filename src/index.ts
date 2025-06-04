@@ -118,77 +118,6 @@ export class UrlSlugAgent {
   }
 
   /**
-   * Generate a podcast series with episode number
-   */
-  @func()
-  async generatePodcastEpisode(
-    /**
-     * The podcast topic/query
-     */
-    query: string,
-    /**
-     * Episode number
-     */
-    episode: number,
-    /**
-     * Base Cloudflare Worker URL (optional)
-     */
-    baseUrl?: string,
-    /**
-     * Cloudflare Account ID (optional - only needed for database saving)
-     */
-    cloudflareAccountId?: Secret,
-    /**
-     * Cloudflare D1 Database ID (optional - only needed for database saving)
-     */
-    cloudflareDatabaseId?: Secret,
-    /**
-     * Cloudflare API Token (optional - only needed for database saving)
-     */
-    cloudflareApiToken?: Secret
-  ): Promise<string> {
-    const base = baseUrl || "https://rickrollworker.lizziepika.workers.dev"
-    const baseSlug = this.createSlug(query)
-    const slug = `${baseSlug}-episode-${episode}`
-    const fullUrl = `${base.replace(/\/$/, '')}/${slug}`
-    
-    // Create environment with the query, episode, and URL
-    const environment = dag
-      .env()
-      .withStringInput("query", query, "the podcast topic")
-      .withStringInput("episode", episode.toString(), "the episode number")
-      .withStringInput("url", fullUrl, "the generated podcast URL")
-    
-    // Use LLM to generate episode-specific response
-    const work = dag
-      .llm()
-      .withEnv(environment)
-      .withPrompt(
-        `You are a podcast producer announcing a new episode in a series.
-        
-        Topic: $query
-        Episode Number: $episode
-        URL: $url
-        
-        Write an exciting announcement (2-3 sentences) for this specific episode.
-        Mention it's episode $episode and include the topic.
-        Include the URL where they can listen.
-        Make it sound like part of an ongoing series.
-        
-        Example: "Episode $episode of your podcast series about $query is now live! This episode dives deep into [specific aspect]. Listen now at $url"`
-      )
-    
-    const llmResponse = await work.sync().toString()
-    
-    // Save to D1 database only if all secrets are provided
-    if (cloudflareAccountId && cloudflareDatabaseId && cloudflareApiToken) {
-      await this.savePodcastToD1(query, slug, fullUrl, cloudflareAccountId, cloudflareDatabaseId, cloudflareApiToken)
-    }
-    
-    return llmResponse
-  }
-
-  /**
    * Generate just the slug from user query
    */
   @func()
@@ -202,29 +131,152 @@ export class UrlSlugAgent {
   }
 
   /**
-   * Generate URL without LLM response
+   * Get all previously generated podcasts from the database
    */
   @func()
-  async generateUrl(
+  async getPreviousPodcasts(
     /**
-     * The user query to convert to a slug
+     * Maximum number of podcasts to return (optional, defaults to 10)
      */
-    query: string,
+    limit?: number,
     /**
-     * Base Cloudflare Worker URL (optional)
+     * Cloudflare Account ID (optional - only needed for database access)
      */
-    baseUrl?: string,
+    cloudflareAccountId?: Secret,
+    /**
+     * Cloudflare D1 Database ID (optional - only needed for database access)
+     */
+    cloudflareDatabaseId?: Secret,
+    /**
+     * Cloudflare API Token (optional - only needed for database access)
+     */
+    cloudflareApiToken?: Secret
   ): Promise<string> {
-    const base = baseUrl || "https://rickrollworker.lizziepika.workers.dev"
-    const slug = this.createSlug(query)
-    const fullUrl = `${base.replace(/\/$/, '')}/${slug}`
-    
-    return fullUrl
+    // Check if all secrets are provided
+    if (!cloudflareAccountId || !cloudflareDatabaseId || !cloudflareApiToken) {
+      return "Error: Cloudflare credentials are required to access the database. Please provide all three secrets."
+    }
+
+    try {
+      const maxResults = limit || 10
+      
+      // Query the database for recent podcasts
+      const result = await dag
+        .container()
+        .from("curlimages/curl:latest")
+        .withSecretVariable("ACCOUNT_ID", cloudflareAccountId)
+        .withSecretVariable("DATABASE_ID", cloudflareDatabaseId)
+        .withSecretVariable("API_TOKEN", cloudflareApiToken)
+        .withExec([
+          "sh", "-c",
+          `curl -s -X POST "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/d1/database/$DATABASE_ID/query" \\
+           -H "Authorization: Bearer $API_TOKEN" \\
+           -H "Content-Type: application/json" \\
+           -d '{"sql":"SELECT topic, slug, url, created_at FROM podcasts ORDER BY created_at DESC LIMIT ?","params":[${maxResults}]}'`
+        ])
+        .stdout()
+
+      const response = JSON.parse(result)
+      
+      if (response.success && response.result && response.result[0] && response.result[0].results) {
+        const podcasts = response.result[0].results
+        
+        if (podcasts.length === 0) {
+          return "No podcasts found in the database yet. Generate your first podcast to get started!"
+        }
+        
+        // Format the results nicely
+        let output = `Found ${podcasts.length} previously generated podcast(s):\n\n`
+        
+        podcasts.forEach((podcast: any, index: number) => {
+          const date = new Date(podcast.created_at).toLocaleDateString()
+          output += `${index + 1}. "${podcast.topic}"\n`
+          output += `   📅 Generated: ${date}\n`
+          output += `   🔗 URL: ${podcast.url}\n`
+          output += `   📝 Slug: ${podcast.slug}\n\n`
+        })
+        
+        return output
+      } else {
+        return "Error retrieving podcasts from database. Make sure your credentials are correct."
+      }
+    } catch (error) {
+      return `Error querying database: ${error}`
+    }
   }
 
   /**
-   * Save podcast information to Cloudflare D1 database
+   * Search for podcasts by topic
    */
+  @func()
+  async searchPodcasts(
+    /**
+     * Search term to look for in podcast topics
+     */
+    searchTerm: string,
+    /**
+     * Cloudflare Account ID (optional - only needed for database access)
+     */
+    cloudflareAccountId?: Secret,
+    /**
+     * Cloudflare D1 Database ID (optional - only needed for database access)
+     */
+    cloudflareDatabaseId?: Secret,
+    /**
+     * Cloudflare API Token (optional - only needed for database access)
+     */
+    cloudflareApiToken?: Secret
+  ): Promise<string> {
+    // Check if all secrets are provided
+    if (!cloudflareAccountId || !cloudflareDatabaseId || !cloudflareApiToken) {
+      return "Error: Cloudflare credentials are required to access the database. Please provide all three secrets."
+    }
+
+    try {
+      // Query the database for podcasts matching the search term
+      const result = await dag
+        .container()
+        .from("curlimages/curl:latest")
+        .withSecretVariable("ACCOUNT_ID", cloudflareAccountId)
+        .withSecretVariable("DATABASE_ID", cloudflareDatabaseId)
+        .withSecretVariable("API_TOKEN", cloudflareApiToken)
+        .withExec([
+          "sh", "-c",
+          `curl -s -X POST "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/d1/database/$DATABASE_ID/query" \\
+           -H "Authorization: Bearer $API_TOKEN" \\
+           -H "Content-Type: application/json" \\
+           -d '{"sql":"SELECT topic, slug, url, created_at FROM podcasts WHERE topic LIKE ? ORDER BY created_at DESC","params":["%${searchTerm.replace(/"/g, '\\"')}%"]}'`
+        ])
+        .stdout()
+
+      const response = JSON.parse(result)
+      
+      if (response.success && response.result && response.result[0] && response.result[0].results) {
+        const podcasts = response.result[0].results
+        
+        if (podcasts.length === 0) {
+          return `No podcasts found matching "${searchTerm}". Try a different search term.`
+        }
+        
+        // Format the results nicely
+        let output = `Found ${podcasts.length} podcast(s) matching "${searchTerm}":\n\n`
+        
+        podcasts.forEach((podcast: any, index: number) => {
+          const date = new Date(podcast.created_at).toLocaleDateString()
+          output += `${index + 1}. "${podcast.topic}"\n`
+          output += `   📅 Generated: ${date}\n`
+          output += `   🔗 URL: ${podcast.url}\n`
+          output += `   📝 Slug: ${podcast.slug}\n\n`
+        })
+        
+        return output
+      } else {
+        return "Error retrieving podcasts from database. Make sure your credentials are correct."
+      }
+    } catch (error) {
+      return `Error searching database: ${error}`
+    }
+  }
   private async savePodcastToD1(
     topic: string,
     slug: string,
