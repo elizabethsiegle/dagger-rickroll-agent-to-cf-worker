@@ -7,6 +7,7 @@ A Dagger-powered agent that takes in a query string that a user wants to generat
 - Generate URL-safe slugs from text input
 - Create a podcast URL with unique slugs
 - Generate LLM responses for input queries
+- Saves user queries + generated URLs + times to [Cloudflare D1 database](https://developers.cloudflare.com/d1/) 
 
 ## Requirements
 - Dagger SDK
@@ -18,6 +19,6 @@ Run on the command line by initially running
 ```bash
 generatePodcast   
 --cloudflare-account-id=env://CLOUDFLARE_ACCOUNT_ID \
-  --cloudflare-database-id=env://CLOUDFLARE_D1_DATABASE_ID \
-  --cloudflare-api-token=env://CLOUDFLARE_API_TOKEN
-  ```
+--cloudflare-database-id=env://CLOUDFLARE_D1_DATABASE_ID \
+--cloudflare-api-token=env://CLOUDFLARE_API_TOKEN
+```
