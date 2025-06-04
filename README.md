@@ -2,6 +2,8 @@
 
 A Dagger-powered agent that takes in a query string that a user wants to generate a podcast about and generates URL slugs to attach to a base Cloudflare Worker URL pretending to be linking to a podcast about the user input. The Worker URL, when clicked, actually rickrolls the user.
 
+The [Cloudflare Worker code is here on GitHub](https://github.com/elizabethsiegle/rickroll-worker).
+
 ## Tools
 - generatePodcast
 - get-previous-podcasts 
