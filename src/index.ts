@@ -204,7 +204,123 @@ export class UrlSlugAgent {
       return `Error querying database: ${error}`
     }
   }
+  
+  /**
+   * Get AI-powered podcast recommendations based on your preferences
+   */
+  @func()
+  async recommendPodcast(
+    /**
+     * Describe what kind of podcast you want (e.g. "I want a podcast that's happy", "I want something about AI")
+     */
+    preference: string,
+    /**
+     * Cloudflare Account ID (optional - only needed for database access)
+     */
+    cloudflareAccountId?: Secret,
+    /**
+     * Cloudflare D1 Database ID (optional - only needed for database access)
+     */
+    cloudflareDatabaseId?: Secret,
+    /**
+     * Cloudflare API Token (optional - only needed for database access)
+     */
+    cloudflareApiToken?: Secret
+  ): Promise<string> {
+    // Check if all secrets are provided
+    if (!cloudflareAccountId || !cloudflareDatabaseId || !cloudflareApiToken) {
+      return "Error: Cloudflare credentials are required to access the database and AI. Please provide all three secrets."
+    }
 
+    try {
+      // First, get all podcasts from the database
+      const dbResult = await dag
+        .container()
+        .from("curlimages/curl:latest")
+        .withSecretVariable("ACCOUNT_ID", cloudflareAccountId)
+        .withSecretVariable("DATABASE_ID", cloudflareDatabaseId)
+        .withSecretVariable("API_TOKEN", cloudflareApiToken)
+        .withExec([
+          "sh", "-c",
+          `curl -s -X POST "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/d1/database/$DATABASE_ID/query" \\
+           -H "Authorization: Bearer $API_TOKEN" \\
+           -H "Content-Type: application/json" \\
+           -d '{"sql":"SELECT topic, slug, url, created_at FROM podcasts ORDER BY created_at DESC LIMIT 50","params":[]}'`
+        ])
+        .stdout()
+
+      const dbResponse = JSON.parse(dbResult)
+      
+      if (!dbResponse.success || !dbResponse.result || !dbResponse.result[0] || !dbResponse.result[0].results) {
+        return "Error retrieving podcasts from database. Make sure your credentials are correct."
+      }
+
+      const podcasts = dbResponse.result[0].results
+      
+      if (podcasts.length === 0) {
+        return "No podcasts found in the database yet. Generate some podcasts first to get recommendations!"
+      }
+
+      // Format podcasts list for AI
+      const podcastList = podcasts.map((podcast: any, index: number) => {
+        const date = new Date(podcast.created_at).toLocaleDateString()
+        return `${index + 1}. Topic: "${podcast.topic}" | URL: ${podcast.url} | Created: ${date}`
+      }).join('\n')
+
+      // Escape special characters for JSON
+      const escapedPreference = preference.replace(/"/g, '\\"').replace(/\n/g, '\\n')
+      const escapedPodcastList = podcastList.replace(/"/g, '\\"').replace(/\n/g, '\\n')
+
+      // Use Cloudflare Workers AI to analyze and recommend
+      const aiResult = await dag
+        .container()
+        .from("curlimages/curl:latest")
+        .withSecretVariable("ACCOUNT_ID", cloudflareAccountId)
+        .withSecretVariable("API_TOKEN", cloudflareApiToken)
+        .withExec([
+          "sh", "-c",
+          `curl -s -X POST "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/ai/run/@cf/meta/llama-3.1-8b-instruct" \\
+           -H "Authorization: Bearer $API_TOKEN" \\
+           -H "Content-Type: application/json" \\
+           -d '{
+             "messages": [
+               {
+                 "role": "system", 
+                 "content": "You are a helpful podcast recommendation assistant. Based on a user preference and a list of available podcasts, recommend the best matching podcast(s). Be enthusiastic and explain why your recommendation fits their request. Include the full URL in your response."
+               },
+               {
+                 "role": "user", 
+                 "content": "User preference: \\"${escapedPreference}\\"\\n\\nAvailable podcasts:\\n${escapedPodcastList}\\n\\nPlease recommend the best podcast(s) that match my preference and explain why."
+               }
+             ]
+           }'`
+        ])
+        .stdout()
+
+      const aiResponse = JSON.parse(aiResult)
+      
+      if (aiResponse.success && aiResponse.result && aiResponse.result.response) {
+        return `🤖 AI Podcast Recommendation:\n\n${aiResponse.result.response}`
+      } else {
+        // Fallback to simple keyword matching if AI fails
+        const keywords = preference.toLowerCase().split(' ')
+        const matches = podcasts.filter((podcast: any) => 
+          keywords.some(keyword => podcast.topic.toLowerCase().includes(keyword))
+        )
+        
+        if (matches.length > 0) {
+          const match = matches[0]
+          const date = new Date(match.created_at).toLocaleDateString()
+          return `🎯 Found a matching podcast!\n\n"${match.topic}"\n📅 Generated: ${date}\n🔗 Listen here: ${match.url}\n\nThis podcast matches your preference for: ${preference}`
+        } else {
+          return `😔 No podcasts found matching "${preference}". Try generating some podcasts with topics you're interested in first!`
+        }
+      }
+    } catch (error) {
+      return `Error getting recommendations: ${error}`
+    }
+  }
+  
   /**
    * Search for podcasts by topic
    */
@@ -277,6 +393,7 @@ export class UrlSlugAgent {
       return `Error searching database: ${error}`
     }
   }
+  
   private async savePodcastToD1(
     topic: string,
     slug: string,

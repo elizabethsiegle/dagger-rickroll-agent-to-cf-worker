@@ -8,6 +8,7 @@ The [Cloudflare Worker code is here on GitHub](https://github.com/elizabethsiegl
 - generatePodcast
 - get-previous-podcasts 
 - search-podcasts
+- recommendPodcast
 
 ## Features
 
@@ -15,11 +16,13 @@ The [Cloudflare Worker code is here on GitHub](https://github.com/elizabethsiegl
 - Create a podcast URL with unique slugs
 - Generate LLM responses for input queries
 - Saves + queries + searches user queries + generated URLs + times to [Cloudflare D1 database](https://developers.cloudflare.com/d1/) 
+- Recommend a podcast or two according to mood using [LlaMA open source model hosted on Cloudflare Workers AI](https://developers.cloudflare.com/workers-ai/models/llama-4-scout-17b-16e-instruct/)
 
 ## Requirements
 - Dagger SDK
 - Node.js/TypeScript environment
 - Cloudflare Workers URL to generate the podcast at + add slug to
+- Cloudflare API key to read/write for both D1 and Workers AI
 
 Run on the command line by initially running 
 `dagger` followed by the following with [Secret arguments](https://docs.dagger.io/api/arguments#secret-arguments)
@@ -39,6 +42,13 @@ get-previous-podcasts --cloudflare-account-id=env://CLOUDFLARE_ACCOUNT_ID \
 To search for a topic, run
 ```bash
 search-podcasts {query} --cloudflare-account-id=env://CLOUDFLARE_ACCOUNT_ID \
+--cloudflare-database-id=env://CLOUDFLARE_D1_DATABASE_ID \
+--cloudflare-api-token=env://CLOUDFLARE_API_TOKEN
+```
+
+To get recommended podcasts, run
+```bash
+recommendPodcast {I want a podcast that is uplifting and happy} --cloudflare-account-id=env://CLOUDFLARE_ACCOUNT_ID \
 --cloudflare-database-id=env://CLOUDFLARE_D1_DATABASE_ID \
 --cloudflare-api-token=env://CLOUDFLARE_API_TOKEN
 ```
